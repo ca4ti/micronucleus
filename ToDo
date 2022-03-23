@@ -1,0 +1,26 @@
+Vyzkouset jiny zpusob "slinkovani" externiho kodu:
+dle: https://github.com/Adam5Wu/micronucleus/blob/USBExport/examples/DigisparkMouseLite/DigiMouseLite.h
+// ----- BEGIN -----
+// Import USB routines from MicroNucleus bootloader
+// Location is important, otherwise seems to trigger compiler bug
+
+#define STRINGIZE(s) #s
+#define FEXPAND(f,s) asm volatile(				\
+"\n .global " STRINGIZE(f)								\
+"\n .set " STRINGIZE(f) "," STRINGIZE(s)	\
+);
+
+void __imports(void) {
+	FEXPAND(_initUSB,FLASHEND-1);
+	FEXPAND(_loopUSB,FLASHEND-3);
+	FEXPAND(_usbStall,FLASHEND-5);
+#if USB_CFG_HAVE_INTRIN_ENDPOINT && !USB_CFG_SUPPRESS_INTR_CODE
+	FEXPAND(_usbSetInterrupt,FLASHEND-7);
+	FEXPAND(_usbInterruptIsReady,FLASHEND-9);
+#endif
+}
+
+#undef FEXPAND
+#undef STRINGIZE
+
+// ----- END -----
