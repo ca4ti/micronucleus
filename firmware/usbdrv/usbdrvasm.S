@@ -18,6 +18,18 @@ the file appropriate for the given clock rate.
 #include "usbportability.h"
 #include "usbdrv.h"         /* for common defs */
 
+#if defined(USBLIBRARY)
+#undef USB_CFG_HAVE_INTRIN_ENDPOINT
+#undef USB_CFG_HAVE_INTRIN_ENDPOINT3
+#undef USB_CFG_SUPPRESS_INTR_CODE
+#undef USB_CFG_IMPLEMENT_FN_WRITEOUT
+#undef USB_CFG_EP3_NUMBER
+#define USB_CFG_SUPPRESS_INTR_CODE 0
+#define USB_CFG_HAVE_INTRIN_ENDPOINT 1
+#define USB_CFG_HAVE_INTRIN_ENDPOINT3 1
+#define USB_CFG_IMPLEMENT_FN_WRITEOUT 1
+#define	USB_CFG_EP3_NUMBER	3
+#endif
 /* register names */
 #define x1      r16
 #define x2      r17
@@ -38,6 +50,9 @@ the file appropriate for the given clock rate.
     extern  usbTxBuf, usbTxStatus1, usbTxStatus3
 #   if USB_COUNT_SOF
         extern usbSofCount
+#   endif
+#   ifdef USBLIBRARY
+        extern usbInterruptLess
 #   endif
     public  usbCrc16
     public  usbCrc16Append
@@ -65,8 +80,10 @@ the file appropriate for the given clock rate.
     .text
     .global USB_INTR_VECTOR
     .type   USB_INTR_VECTOR, @function
+#   ifndef HAVEUSBCRC
     .global usbCrc16
     .global usbCrc16Append
+#endif
 #endif /* __IAR_SYSTEMS_ASM__ */
 
 
@@ -142,14 +159,11 @@ RTMODEL "__rt_version", "3"
 
 #endif
 
-
 #if USB_USE_FAST_CRC
 
 ; This implementation is faster, but has bigger code size
-; This version has been optimized in size compared to the original
-; fast CRC by Shay Green, January 2014.
-
-; Thanks to Slawomir Fras (BoskiDialer) for the original contribution.
+; Thanks to Slawomir Fras (BoskiDialer) for this code and to Shay Green for
+; even further optimizations!
 ; It implements the following C pseudo-code:
 ; unsigned table(unsigned char x)
 ; {
@@ -178,12 +192,11 @@ RTMODEL "__rt_version", "3"
 ;   scratch r23
 ;   resCrc  r24+r25 / r16+r17
 ;   ptr     X / Z
-
 usbCrc16:
     movw    ptrL, argPtrL
     ldi     resCrcL, 0xFF
     ldi     resCrcH, 0xFF
-    clr     bitCnt          ; zero
+    clr     bitCnt          ; zero reg
     rjmp    usbCrc16LoopTest
 usbCrc16ByteLoop:
     ld      byte, ptr+
@@ -213,8 +226,8 @@ usbCrc16LoopTest:
     com     resCrcL
     com     resCrcH
     ret
-    
-#else   // USB_USE_FAST_CRC 
+
+#else   /* USB_USE_FAST_CRC */
 
 ; This implementation is slower, but has less code size
 ;
@@ -228,6 +241,8 @@ usbCrc16LoopTest:
 ;   scratch r23
 ;   resCrc  r24+r25 / r16+r17
 ;   ptr     X / Z
+	.global	usbCrc16
+	.func	usbCrc16
 usbCrc16:
     mov     ptrL, argPtrL
     mov     ptrH, argPtrH
@@ -257,9 +272,10 @@ usbCrcReady:
     ret
 ; Thanks to Reimar Doeffinger for optimizing this CRC routine!
 
-#endif // USB_USE_FAST_CRC 
+#endif /* USB_USE_FAST_CRC */
 
 ; extern unsigned usbCrc16Append(unsigned char *data, unsigned char len);
+	.global	usbCrc16Append
 usbCrc16Append:
     rcall   usbCrc16
     st      ptr+, resCrcL
@@ -370,7 +386,7 @@ usbMFTimeout:
 #   if USB_CFG_CLOCK_KHZ == 18000
 #       include "usbdrvasm18-crc.inc"
 #   else
-#       error "USB_CFG_CLOCK_KHZ is not one of the supported crc-rates!"
+#       error "USB_CFG_CLOCK_KHZ is not one of the supported rates for USB_CFG_CHECK_CRC!"
 #   endif
 #else   /* USB_CFG_CHECK_CRC */
 #   if USB_CFG_CLOCK_KHZ == 12000
@@ -383,9 +399,11 @@ usbMFTimeout:
 #       include "usbdrvasm16.inc"
 #   elif USB_CFG_CLOCK_KHZ == 16500
 #       include "usbdrvasm165.inc"
+#   elif USB_CFG_CLOCK_KHZ == 18000
+#       include "usbdrvasm18.inc"
 #   elif USB_CFG_CLOCK_KHZ == 20000
 #       include "usbdrvasm20.inc"
 #   else
-#       error "USB_CFG_CLOCK_KHZ is not one of the supported non-crc-rates!"
+#       error "USB_CFG_CLOCK_KHZ is not one of the supported rates!"
 #   endif
 #endif /* USB_CFG_CHECK_CRC */

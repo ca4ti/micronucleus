@@ -212,6 +212,12 @@
 #define LED_PORT    PORTB
 #define LED_PIN     PB1
 
+/* upgrade can beep on pin - select pin number and port or comment out */
+/*
+#define BEEP_IOPORTNAME  B
+#define BEEP_BIT         1
+*/
+
 /*
  *  This is the implementation of the LED code. Change the configuration above unless you want to 
  *  change the led behavior

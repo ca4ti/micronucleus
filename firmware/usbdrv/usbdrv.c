@@ -3,8 +3,6 @@
  * Author: Christian Starkjohann
  * Creation Date: 2004-12-29
  * Tabsize: 4
- *
- 
  * Copyright: (c) 2005 by OBJECTIVE DEVELOPMENT Software GmbH
  * License: GNU GPL v2 (see License.txt), GNU GPL v3 or proprietary (CommercialLicense.txt)
  */
@@ -15,12 +13,15 @@
  *     a) Replies to USB SETUP IN Packets are now only possible from Flash
  *       * Commented out routines to copy from SRAM
  *       * remove msgflag variable and all handling involving it
- */ 
-#define MNHACK_ONLY_FLASH_MSGPTR                
-/*     b) Do not use preinitialized global variables to avoid having to initialize
+ *       use : #define MNHACK_ONLY_FLASH_MSGPTR                
+ *     b) Do not use preinitialized global variables to avoid having to initialize
  *        the data section.
+ *       use : #define MNHACK_NO_DATASECTION
+ *
+ * Use in combination with micronucleus bootloader as library
+ *    a) -DHAVEUSEBLIB=1 - for use micronucleus as library
+ *    b) -DUSBLIBRARY=1  - for build micronucleus with library features
  */
-#define MNHACK_NO_DATASECTION   
  
 #include "usbdrv.h"
 #include "oddebug.h"
@@ -33,28 +34,34 @@ documentation of the entire driver.
 
 /* ------------------------------------------------------------------------- */
 
-/* raw USB registers / interface to assembler code: */
-uchar usbRxBuf[2*USB_BUFSIZE];  /* raw RX buffer: PID, 8 bytes data, 2 bytes CRC */
-uchar       usbInputBufOffset;  /* offset in usbRxBuf used for low level receiving */
-uchar       usbDeviceAddr;      /* assigned during enumeration, defaults to 0 */
-uchar       usbNewDeviceAddr;   /* device ID which should be set after status phase */
-uchar       usbConfiguration;   /* currently selected configuration. Administered by driver, but not used */
-volatile schar usbRxLen;        /* = 0; number of bytes in usbRxBuf; 0 means free, -1 for flow control */
-uchar       usbCurrentTok;      /* last token received or endpoint number for last OUT token if != 0 */
-uchar       usbRxToken;         /* token for data we received; or endpont number for last OUT */
-#ifdef MNHACK_NO_DATASECTION
-  volatile uchar usbTxLen;   /* number of bytes to transmit with next IN token or handshake token */
-#else
-  volatile uchar usbTxLen = USBPID_NAK;   /* number of bytes to transmit with next IN token or handshake token */
+#ifndef HAVEUSBLIB
+#define HAVEUSBLIB	0
 #endif
-uchar       usbTxBuf[USB_BUFSIZE];/* data to transmit with next IN, free if usbTxLen contains handshake token */
+#if HAVEUSBLIB
+#define EX	extern
+#define EXS     extern
+#else
+#define EX	
+#define EXS     static
+#endif
+/* raw USB registers / interface to assembler code: */
+EX uchar usbRxBuf[2*USB_BUFSIZE];  /* raw RX buffer: PID, 8 bytes data, 2 bytes CRC */
+EX uchar       usbInputBufOffset;  /* offset in usbRxBuf used for low level receiving */
+EX uchar       usbDeviceAddr;      /* assigned during enumeration, defaults to 0 */
+EX uchar       usbNewDeviceAddr;   /* device ID which should be set after status phase */
+EX uchar       usbConfiguration;   /* currently selected configuration. Administered by driver, but not used */
+EX volatile schar usbRxLen;        /* = 0; number of bytes in usbRxBuf; 0 means free, -1 for flow control */
+EX uchar       usbCurrentTok;      /* last token received or endpoint number for last OUT token if != 0 */
+EX uchar       usbRxToken;         /* token for data we received; or endpont number for last OUT */
+EX volatile uchar usbTxLen;   /* number of bytes to transmit with next IN token or handshake token */
+EX uchar       usbTxBuf[USB_BUFSIZE];/* data to transmit with next IN, free if usbTxLen contains handshake token */
 #if USB_COUNT_SOF
 volatile uchar  usbSofCount;    /* incremented by assembler module every SOF */
 #endif
-#if USB_CFG_HAVE_INTRIN_ENDPOINT && !USB_CFG_SUPPRESS_INTR_CODE
-usbTxStatus_t  usbTxStatus1;
-#   if USB_CFG_HAVE_INTRIN_ENDPOINT3
-usbTxStatus_t  usbTxStatus3;
+#if (USB_CFG_HAVE_INTRIN_ENDPOINT && !USB_CFG_SUPPRESS_INTR_CODE) || defined(USBLIBRARY)
+EX usbTxStatus_t  usbTxStatus1;
+#   if USB_CFG_HAVE_INTRIN_ENDPOINT3 || defined(USBLIBRARY)
+EX usbTxStatus_t  usbTxStatus3;
 #   endif
 #endif
 #if USB_CFG_CHECK_DATA_TOGGLING
@@ -62,15 +69,15 @@ uchar       usbCurrentDataToken;/* when we check data toggling to ignore duplica
 #endif
 
 /* USB status registers / not shared with asm code */
-usbMsgPtr_t         usbMsgPtr;      /* data to transmit next -- ROM or RAM address */
-#ifdef MNHACK_NO_DATASECTION
-  static usbMsgLen_t  usbMsgLen; /* remaining number of bytes */
-#else
-  static usbMsgLen_t  usbMsgLen = USB_NO_MSG; /* remaining number of bytes */
-#endif
-  
-#ifndef MNHACK_ONLY_FLASH_MSGPTR                
+EX usbMsgPtr_t         usbMsgPtr;      /* data to transmit next -- ROM or RAM address */
+static usbMsgLen_t  usbMsgLen; /* remaining number of bytes */
+
+#ifndef MNHACK_ONLY_FLASH_MSGPTR
 static uchar        usbMsgFlags;    /* flag values see below */
+#endif
+
+#ifdef USBLIBRARY
+volatile uchar usbInterruptLess; /* flag - running without interrupt */
 #endif
 
 #define USB_FLG_MSGPTR_IS_ROM   (1<<6)
@@ -245,7 +252,7 @@ static inline void  usbResetStall(void)
 static void usbGenericSetInterrupt(uchar *data, uchar len, usbTxStatus_t *txStatus)
 {
 uchar   *p;
-char    i;
+schar   i;
 
 #if USB_CFG_IMPLEMENT_HALT
     if(usbTxLen1 == USBPID_STALL)
@@ -317,18 +324,17 @@ USB_PUBLIC void usbSetInterrupt3(uchar *data, uchar len)
  * This may cause problems with undefined symbols if compiled without
  * optimizing!
  */
-
-  #define GET_DESCRIPTOR(cfgProp, staticName)         \
-      if(cfgProp){                                    \
-          if((cfgProp) & USB_PROP_IS_RAM)             \
-              flags = 0;                              \
-          if((cfgProp) & USB_PROP_IS_DYNAMIC){        \
-              len = usbFunctionDescriptor(rq);        \
-          }else{                                      \
-              len = USB_PROP_LENGTH(cfgProp);         \
-              usbMsgPtr = (usbMsgPtr_t)(staticName);  \
-          }                                           \
-      }
+#define GET_DESCRIPTOR(cfgProp, staticName)         \
+    if(cfgProp){                                    \
+        if((cfgProp) & USB_PROP_IS_RAM)             \
+            flags = 0;                              \
+        if((cfgProp) & USB_PROP_IS_DYNAMIC){        \
+            len = usbFunctionDescriptor(rq);        \
+        }else{                                      \
+            len = USB_PROP_LENGTH(cfgProp);         \
+            usbMsgPtr = (usbMsgPtr_t)(staticName);  \
+        }                                           \
+    }
 
 /* usbDriverDescriptor() is similar to usbFunctionDescriptor(), but used
  * internally for all types of descriptors.
@@ -375,10 +381,11 @@ uchar       flags = USB_FLG_MSGPTR_IS_ROM;
             len = usbFunctionDescriptor(rq);
         }
     SWITCH_END
-    
-    flags=flags;  // Make compiler shut up about unused variable
-#ifndef MNHACK_ONLY_FLASH_MSGPTR                
+
+#ifndef MNHACK_ONLY_FLASH_MSGPTR
     usbMsgFlags = flags;
+#else
+    flags=flags;  // Make compiler shut up about unused variable
 #endif    
     return len;
 }
@@ -646,11 +653,12 @@ isNotReset:
 
 USB_PUBLIC void usbInit(void)
 {
-#ifdef MNHACK_NO_DATASECTION   
-    usbTxLen = USBPID_NAK;
+    usbTxLen  = USBPID_NAK;
     usbMsgLen = USB_NO_MSG;
+#ifdef USBLIBRARY
+    usbInterruptLess = 10; /* waitForData timeout = 10 0=running with interrupt */
 #endif
-    
+
 #if USB_INTR_CFG_SET != 0
     USB_INTR_CFG |= USB_INTR_CFG_SET;
 #endif
@@ -668,3 +676,4 @@ USB_PUBLIC void usbInit(void)
 }
 
 /* ------------------------------------------------------------------------- */
+

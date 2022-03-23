@@ -22,6 +22,7 @@ Thanks to Oleg Semyonov for his help with the IAR tools port!
 
 #ifndef __usbportability_h_INCLUDED__
 #define __usbportability_h_INCLUDED__
+#include "usbconfig.h"
 
 /* We check explicitly for IAR and CodeVision. Default is avr-gcc/avr-libc. */
 
@@ -117,7 +118,7 @@ static inline void  sei(void)
 #else   /* default development environment is avr-gcc/avr-libc */
 /* ------------------------------------------------------------------------- */
 
-#include <avr/io.h>
+#include "gcciofixes.h"
 #ifdef __ASSEMBLER__
 #   define _VECTOR(N)   __vector_ ## N   /* io.h does not define this for asm */
 #else

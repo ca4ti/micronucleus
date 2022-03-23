@@ -133,7 +133,11 @@ return;\
 /* This macro (if defined) is executed when a USB SET_ADDRESS request was
  * received.
  */
+#if defined(USBLIBRARY) && USBLIBRARY
+#define USB_COUNT_SOF                   1
+#else
 #define USB_COUNT_SOF                   0
+#endif
 /* define this macro to 1 if you need the global variable "usbSofCount" which
  * counts SOF packets. This feature requires that the hardware interrupt is
  * connected to D- instead of D+.
@@ -340,4 +344,22 @@ return;\
 #define USB_CFG_DESCR_PROPS_HID_REPORT              0
 #define USB_CFG_DESCR_PROPS_UNKNOWN                 0
 
+/* This copy of usbdrv was optimized to reduce the memory footprint 
+ * with micronucleus V2
+ *
+ * Changes: 
+ *     a) Replies to USB SETUP IN Packets are now only possible from Flash
+ *       * Commented out routines to copy from SRAM
+ *       * remove msgflag variable and all handling involving it
+ */ 
+#define MNHACK_ONLY_FLASH_MSGPTR                
+/*     b) Do not use preinitialized global variables to avoid having to initialize
+ *        the data section.
+ */
+#define MNHACK_NO_DATASECTION   
+
+#define INTERRUPTLESS
+
+#define USB_CFG_USE_SWITCH_STATEMENT	0
+#define __DELAY_BACKWARD_COMPATIBLE__
 #endif /* __usbconfig_h_included__ */

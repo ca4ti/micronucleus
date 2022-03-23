@@ -82,7 +82,7 @@ se0:
     breq    handleSetupOrOut    ;[30]
     cpi     token, USBPID_OUT   ;[31]
     brne    ignorePacket        ;[32] must be ack, nak or whatever
-;   rjmp    handleSetupOrOut    ; fallthrough
+;    rjmp    handleSetupOrOut    ; fallthrough
 
 ;Setup and Out are followed by a data packet two bit times (16 cycles) after
 ;the end of SE0. The sync code allows up to 40 cycles delay from the start of
@@ -93,15 +93,22 @@ se0:
 ;or usbpoll() will get confused.
 
 handleSetupOrOut:               ;[32]
+#ifdef USBLIBRARY
+    lds     YL,usbInterruptLess
+    tst     YL
+    breq    noWaitForData
+#else
     ldi     YL,10               ; Time out
+#endif
 waitForData:
     USB_LOAD_PENDING(x2)        ;[xx]
     sbrc    x2, USB_INTR_PENDING_BIT;[xx] check whether data is already arriving
     rjmp    storeTokenAndReturn
     dec     YL
-    brne     waitForData
-
-#if USB_CFG_IMPLEMENT_FN_WRITEOUT   /* if we have data for endpoint != 0, set usbCurrentTok to address */
+    brne    waitForData
+;    rjmp    noWaitForData
+noWaitForData:
+#if USB_CFG_IMPLEMENT_FN_WRITEOUT /* if we have data for endpoint != 0, set usbCurrentTok to address */
     andi    x3, 0xf             ;[32]
     breq    storeTokenAndReturn ;[33]
     mov     token, x3           ;[34] indicate that this is endpoint x OUT
@@ -115,9 +122,11 @@ doReturn:
     rjmp    waitForJ            ;[51] save the pops and pushes -- a new interrupt is already pending
 sofError:
     POP_RETI                    ;macro call
-    
+#if defined(USBLIBRARY) || defined(INTERRUPTLESS)
     ret                         ;02-02-2014 not called from INT in micronucleus.
-;    reti
+#else
+    reti
+#endif
 
 handleData:
 #if USB_CFG_CHECK_CRC
@@ -141,16 +150,21 @@ handleData:
     
 ; Microncleus V2 does not need double buffering due to in-order processing of USB-rx
 ; TB 2014-01-04
-;    lds     x2, usbInputBufOffset;[32] swap buffers
-;    ldi     cnt, USB_BUFSIZE    ;[34]
-;    sub     cnt, x2             ;[35]
-;    sts     usbInputBufOffset, cnt;[36] buffers now swapped
-    rjmp    sendAckAndReti      ;[38] 40 + 17 = 57 until SOP
+#ifdef USBLIBRARY
+    lds     x2, usbInputBufOffset;[32] swap buffers
+    ldi     cnt, USB_BUFSIZE    ;[34]
+    sub     cnt, x2             ;[35]
+    sts     usbInputBufOffset, cnt;[36] buffers now swapped
+#endif
+    rjmp    sendAckAndReti	;[38] 40 + 17 = 57 until SOP
 
 handleIn:
 ;We don't send any data as long as the C code has not processed the current
 ;input data and potentially updated the output data. That's more efficient
 ;in terms of code size than clearing the tx buffers when a packet is received.
+#if ! USB_CFG_HAVE_INTRIN_ENDPOINT3 && defined(USB_INTERRUPT_TOKEN_SAVE)
+    sts     USB_INTERRUPT_TOKEN_SAVE, token; [30]
+#endif
     lds     x1, usbRxLen        ;[30]
     cpi     x1, 1               ;[32] negative values are flow control, 0 means "buffer free"
     brge    sendNakAndReti      ;[33] unprocessed input packet?

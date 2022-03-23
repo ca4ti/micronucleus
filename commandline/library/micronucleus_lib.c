@@ -200,8 +200,7 @@ int micronucleus_writeFlash(micronucleus* deviceHandle, unsigned int program_siz
     }
 
     // Reset vector patching is done in the host tool in micronucleus >=2    
-    if (deviceHandle->version.major >=2)
-    {
+    if (deviceHandle->version.major >=2) {
       if ( address == 0 ) {
         // save user reset vector (bootloader will patch with its vector)
         unsigned int word0,word1;
@@ -211,7 +210,7 @@ int micronucleus_writeFlash(micronucleus* deviceHandle, unsigned int program_siz
         if (word0==0x940c) {  // long jump
           userReset = word1;          
         } else if ((word0&0xf000)==0xc000) {  // rjmp
-          userReset = (word0 & 0x0fff) - 0 + 1;    
+          userReset = (word0 & 0x0fff) - 0 + 1;
         } else {
           fprintf(stderr,
                   "The reset vector of the user program does not contain a branch instruction,\n"
@@ -219,22 +218,20 @@ int micronucleus_writeFlash(micronucleus* deviceHandle, unsigned int program_siz
                   );
           return -1;         
         } 
-        
         // Patch in jmp to bootloader. 
         if (deviceHandle->bootloader_start > 0x2000) {
           //  jmp
           unsigned data = 0x940c;
           page_buffer [ 0 ] = data >> 0 & 0xff;
           page_buffer [ 1 ] = data >> 8 & 0xff;
-          page_buffer [ 2 ] = deviceHandle->bootloader_start >> 0 & 0xff;
-          page_buffer [ 3 ] = deviceHandle->bootloader_start >> 8 & 0xff;        
+          page_buffer [ 2 ] = deviceHandle->bootloader_start >> 1 & 0xff; // gabo zmena shl 0/8 -> 1/9 - vydelit dvema
+          page_buffer [ 3 ] = deviceHandle->bootloader_start >> 9 & 0xff;
         } else {
           // rjmp
           unsigned data =  0xc000 | ((deviceHandle->bootloader_start/2 - 1) & 0x0fff);        
           page_buffer [ 0 ] = data >> 0 & 0xff;
           page_buffer [ 1 ] = data >> 8 & 0xff;
         }
-        
       }
       
       if ( address >= deviceHandle->bootloader_start - deviceHandle->page_size ) {
@@ -251,7 +248,7 @@ int micronucleus_writeFlash(micronucleus* deviceHandle, unsigned int program_siz
           page_buffer [user_reset_addr - address + 3] = userReset >> 8 & 0xff;        
         } else {
           // rjmp
-          unsigned data =  0xc000 | ((userReset - user_reset_addr/2 - 1) & 0x0fff);        
+          unsigned data =  0xc000 | ((userReset - user_reset_addr/2 - 1) & 0x0fff);
           page_buffer [user_reset_addr - address + 0] = data >> 0 & 0xff;
           page_buffer [user_reset_addr - address + 1] = data >> 8 & 0xff;
         }
@@ -262,7 +259,7 @@ int micronucleus_writeFlash(micronucleus* deviceHandle, unsigned int program_siz
     // always write last page so bootloader can insert the tiny vector table
     if ( address >= deviceHandle->bootloader_start - deviceHandle->page_size )
       pagecontainsdata = 1;
-  
+
     // ask microcontroller to write this page's data
     if (pagecontainsdata) {
 

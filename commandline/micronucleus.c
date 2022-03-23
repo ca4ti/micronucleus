@@ -70,12 +70,13 @@ int main(int argc, char **argv) {
 
   // parse arguments
   int run = 0;
+  int info_only = 0;
   int file_type = FILE_TYPE_INTEL_HEX;
   int arg_pointer = 1;
   #if defined(WIN)
-  char* usage = "usage: micronucleus [--help] [--run] [--dump-progress] [--fast-mode] [--type intel-hex|raw] [--timeout integer] (--erase-only | filename)";
+  char* usage = "usage: micronucleus [--help] [--run] [--dump-progress] [--fast-mode] [--type intel-hex|raw] [--timeout integer] (--erase-only | --info | filename)";
   #else
-  char* usage = "usage: micronucleus [--help] [--run] [--dump-progress] [--fast-mode] [--type intel-hex|raw] [--timeout integer] [--no-ansi] (--erase-only | filename)";
+  char* usage = "usage: micronucleus [--help] [--run] [--dump-progress] [--fast-mode] [--type intel-hex|raw] [--timeout integer] [--no-ansi] (--erase-only | --info | filename)";
   #endif 
   progress_step = 0;
   progress_total_steps = 5; // steps: waiting, connecting, parsing, erasing, writing, (running)?
@@ -112,6 +113,8 @@ int main(int argc, char **argv) {
       puts("                           for driving GUIs");
       puts("             --erase-only: Erase the device without programming. Fills the");
       puts("                           program memory with 0xFFFF. Any files are ignored.");
+      puts("                   --info: Only print available size and CPU signature.");
+      puts("                           Any files are ignored.");
       puts("              --fast-mode: Speed up the timing of micronucleus. Do not use if");
       puts("                           you encounter USB errors. ");
       puts("                    --run: Ask bootloader to run the program when finished");
@@ -134,6 +137,9 @@ int main(int argc, char **argv) {
     } else if (strcmp(argv[arg_pointer], "--erase-only") == 0) {
       erase_only = 1;
       progress_total_steps -= 1;
+    } else if (strcmp(argv[arg_pointer], "--info") == 0) {
+      info_only = 1;
+      progress_total_steps -= 2;
     } else if (strcmp(argv[arg_pointer], "--timeout") == 0) {
       arg_pointer += 1;
       if (sscanf(argv[arg_pointer], "%d", &timeout) != 1) {
@@ -147,8 +153,8 @@ int main(int argc, char **argv) {
     arg_pointer += 1;
   }
 
-  if (file == NULL && erase_only == 0) {
-    printf("Neither filename nore --erase-only given!\n\n");
+  if (file == NULL && erase_only == 0 && info_only == 0) {
+    printf("Neither filename nore --erase-only or --info given!\n\n");
     puts(usage);
     return EXIT_FAILURE;
   }
@@ -197,6 +203,8 @@ int main(int argc, char **argv) {
   printf("> Suggested sleep time between sending pages: %ums\n", my_device->write_sleep);
   printf("> Whole page count: %d  page size: %d\n", my_device->pages,my_device->page_size);
   printf("> Erase function sleep duration: %dms\n", my_device->erase_sleep);
+
+  if (info_only) goto end_ok;
 
   int startAddress = 1, endAddress = 0;
 
@@ -291,6 +299,7 @@ int main(int argc, char **argv) {
     printProgress(1.0);
   }
 
+end_ok:
   printf(">> Micronucleus done. Thank you!\n");
 
   return EXIT_SUCCESS;

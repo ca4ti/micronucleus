@@ -38,6 +38,8 @@
   #error "Micronucleus only supports pagesizes up to 256 bytes"
 #endif
 
+#define PROGMEM_SIZE (BOOTLOADER_ADDRESS - POSTSCRIPT_SIZE) /* max size of user program */
+
 #if ((AUTO_EXIT_MS>0) && (AUTO_EXIT_MS<1000))
   #error "Do not set AUTO_EXIT_MS to below 1s to allow Micronucleus to function properly"
 #endif
@@ -92,6 +94,18 @@ register uint8_t        command         asm("r3");  // bind command to r3
 #define nop() asm volatile("nop")
 #define wdr() asm volatile("wdr")
 
+#if defined(CTPB) 
+  #define boot_page_clean()	__SPM_REG=(_BV(CTPB)|_BV(__SPM_ENABLE));asm volatile("spm")
+#else
+  #define boot_page_clean()
+#endif
+
+#if !defined(RWWSRE) && !defined(ASRE)
+  #undef boot_spm_busy_wait
+  #define boot_spm_busy_wait()
+  #undef boot_rww_enable
+  #define boot_rww_enable()
+#endif
 // Use the old delay routines without NOP padding. This saves memory.
 #define __DELAY_BACKWARD_COMPATIBLE__   
 
@@ -100,7 +114,7 @@ static inline void eraseApplication(void);
 static void writeFlashPage(void);
 static void writeWordToPageBuffer(uint16_t data);
 static uint8_t usbFunctionSetup(uint8_t data[8]);
-static inline void leaveBootloader(void);
+//static inline void leaveBootloader(void);
 
 // This function is never called, it is just here to suppress a compiler warning.
 USB_PUBLIC usbMsgLen_t usbFunctionDescriptor(struct usbRequest *rq) { return 0; }
@@ -118,16 +132,18 @@ static inline void eraseApplication(void) {
     ptr -= SPM_PAGESIZE;        
 #endif    
     boot_page_erase(ptr);
+    boot_spm_busy_wait();
   }
-  
   // Reset address to ensure the reset vector is written first.
-  currentAddress.w = 0;   
+  currentAddress.w = 0;  
 }
 
 // simply write currently stored page in to already erased flash memory
 static inline void writeFlashPage(void) {
-  if (currentAddress.w - 2 <BOOTLOADER_ADDRESS)
+  if (currentAddress.w - 2 < BOOTLOADER_ADDRESS) {
       boot_page_write(currentAddress.w - 2);   // will halt CPU, no waiting required
+      boot_spm_busy_wait();
+  }
 }
 
 // Write a word into the page buffer.
@@ -136,7 +152,7 @@ static inline void writeFlashPage(void) {
 // tool, starting with firmware V2
 static void writeWordToPageBuffer(uint16_t data) {
 
-#ifndef ENABLE_UNSAFE_OPTIMIZATIONS     
+#if !defined(ENABLE_UNSAFE_OPTIMIZATIONS) && !defined(ENABLE_RESET_VECT_CLIENT)
   #if BOOTLOADER_ADDRESS < 8192
   // rjmp
   if (currentAddress.w == RESET_VECTOR_OFFSET * 2) {
@@ -174,19 +190,19 @@ static uint8_t usbFunctionSetup(uint8_t data[8]) {
       // Mask to page boundary to prevent vulnerability to partial page write "attacks"
         if ( currentAddress.w != 0 ) {
             currentAddress.b[0]=rq->wIndex.bytes[0] & (~ (SPM_PAGESIZE-1));     
-            currentAddress.b[1]=rq->wIndex.bytes[1];     
+            currentAddress.b[1]=rq->wIndex.bytes[1];
             
             // clear page buffer as a precaution before filling the buffer in case 
-            // a previous write operation failed and there is still something in the buffer.         
-            __SPM_REG=(_BV(CTPB)|_BV(__SPM_ENABLE));
-            asm volatile("spm");
+            // a previous write operation failed and there is still something in the buffer.
+            boot_page_clean();
+            boot_rww_enable();
             
         }        
     } else if (rq->bRequest == cmd_write_data) { // Write data
       writeWordToPageBuffer(rq->wValue.word);
       writeWordToPageBuffer(rq->wIndex.word);
       if ((currentAddress.b[0] % SPM_PAGESIZE) == 0)
-          command=cmd_write_page; // ask runloop to write our page       
+          command=cmd_write_page; // ask runloop to write our page
   } else {
     // Handle cmd_erase_application and cmd_exit
     command=rq->bRequest&0x3f;    
@@ -197,10 +213,14 @@ static uint8_t usbFunctionSetup(uint8_t data[8]) {
 static void initHardware (void)
 {
   // Disable watchdog and set timeout to maximum in case the WDT is fused on 
-#ifdef CCP
+#if defined(CCP)
   // New ATtinies841/441 use a different unlock sequence and renamed registers
-  MCUSR=0;    
+  MCUSR=0;
   CCP = 0xD8; 
+  WDTCSR = 1<<WDP2 | 1<<WDP1 | 1<<WDP0; 
+#elif defined(__AVR_ATtiny2313__)
+  MCUSR=0;
+  WDTCSR |= 1<<WDCE | 1<<WDE;
   WDTCSR = 1<<WDP2 | 1<<WDP1 | 1<<WDP0; 
 #else
   MCUSR=0;    
@@ -208,7 +228,6 @@ static void initHardware (void)
   WDTCR = 1<<WDP2 | 1<<WDP1 | 1<<WDP0; 
 #endif  
 
-  
   usbDeviceDisconnect();  /* do this while interrupts are disabled */
   _delay_ms(300);  
   usbDeviceConnect();
@@ -219,7 +238,7 @@ static void initHardware (void)
 /* ------------------------------------------------------------------------ */
 // reset system to a normal state and launch user program
 static void leaveBootloader(void) __attribute__((__noreturn__));
-static inline void leaveBootloader(void) {
+static void leaveBootloader(void) {
  
   bootLoaderExit();
 
@@ -287,7 +306,7 @@ int main(void) {
         
         if (USB_INTR_PENDING & (1<<USB_INTR_PENDING_BIT)) {
           USB_INTR_VECTOR();  
-          USB_INTR_PENDING = 1<<USB_INTR_PENDING_BIT;  // Clear int pending, in case timeout occured during SYNC                     
+          USB_INTR_PENDING = 1<<USB_INTR_PENDING_BIT;  // Clear int pending, in case timeout occured during SYNC
           idlePolls.b[1]=0; // reset idle polls when we get usb traffic
          break;
         }
@@ -321,7 +340,11 @@ int main(void) {
         len = usbRxLen - 3;
         
         if(len >= 0){
+#ifdef USBLIBRARY
+            usbProcessRx(usbRxBuf + USB_BUFSIZE + 1 - usbInputBufOffset, len); // if lib swap buffers
+#else
             usbProcessRx(usbRxBuf + 1, len); // only single buffer due to in-order processing
+#endif
             usbRxLen = 0;       /* mark rx buffer as available */
         }
         
@@ -364,12 +387,11 @@ int main(void) {
     } while(1);  
 
     LED_EXIT();
-    
     initHardware();  /* Disconnect micronucleus */    
     
     USB_INTR_ENABLE = 0;
     USB_INTR_CFG = 0;       /* also reset config bits */
- 
+
   }
    
   leaveBootloader();
